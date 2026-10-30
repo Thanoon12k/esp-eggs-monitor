@@ -2,7 +2,7 @@ name: egg_incubator
 description: "Watch and control an ESP32 egg incubator from your phone."
 publish_to: 'none'
 
-version: 1.1.0+3
+version: 1.1.1+4
 
 environment:
   sdk: ^3.8.0

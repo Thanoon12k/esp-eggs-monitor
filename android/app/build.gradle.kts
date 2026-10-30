@@ -25,10 +25,23 @@ android {
         versionName = flutter.versionName
     }
 
+    // The release build is signed with android/app/upload.jks when the build machine provides it,
+    // so every build has the same signature and updates install over the old version.
+    val uploadKey = file("upload.jks")
+    signingConfigs {
+        if (uploadKey.exists()) {
+            create("upload") {
+                storeFile = uploadKey
+                storePassword = System.getenv("UPLOAD_STORE_PASSWORD") ?: "incubator"
+                keyAlias = "incubator"
+                keyPassword = System.getenv("UPLOAD_KEY_PASSWORD") ?: "incubator"
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: sign with your own key before publishing to a store.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("upload") ?: signingConfigs.getByName("debug")
         }
     }
 }
