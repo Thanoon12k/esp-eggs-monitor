@@ -256,11 +256,11 @@ class Incubator extends ChangeNotifier {
 
   // ---- Pairing ---------------------------------------------------------------------
 
-  /// Looks for an incubator: its own setup Wi-Fi, the last known address, then every
-  /// address on the phone's Wi-Fi network. Returns the host and its state.
+  /// Looks for an incubator: its own setup Wi-Fi, its name on the network, the last known address,
+  /// then every address on the phone's Wi-Fi network. Returns the host and its state.
   static Future<(String, Map<String, dynamic>)?> discover(String lastAddr) async {
-    for (final host in ['192.168.4.1', if (lastAddr.isNotEmpty) lastAddr]) {
-      final j = await _probe(host);
+    for (final host in ['192.168.4.1', 'incubator.local', if (lastAddr.isNotEmpty) lastAddr]) {
+      final j = await _probe(host, timeout: const Duration(seconds: 3));
       if (j != null) return (host, j);
     }
     final prefixes = <String>{};
@@ -276,7 +276,8 @@ class Incubator extends ChangeNotifier {
       for (var start = 1; start < 255; start += 64) {
         final batch = [for (var i = start; i < start + 64 && i < 255; i++) '$prefix.$i'];
         final results = await Future.wait(
-            batch.map((h) async => (h, await _probe(h, timeout: const Duration(milliseconds: 1500)))));
+            // The incubator can be busy for a few seconds while it reports to the cloud.
+            batch.map((h) async => (h, await _probe(h, timeout: const Duration(seconds: 4)))));
         for (final (h, j) in results) {
           if (j != null) return (h, j);
         }
