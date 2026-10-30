@@ -6,6 +6,7 @@ import 'main.dart';
 import 'models.dart';
 import 'species.dart';
 import 'strings.dart';
+import 'tray.dart';
 
 /// Next milestone of a running batch, for the card.
 String milestone(Batch b) {
@@ -27,42 +28,127 @@ class BatchCard extends StatelessWidget {
     return Card(
       color: theme.colorScheme.surfaceContainerHigh,
       clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
       child: InkWell(
         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => BatchScreen(b.id))),
         child: Padding(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
-              const Icon(Icons.egg_rounded, size: 20),
-              const SizedBox(width: 8),
+              DayRing(b),
+              const SizedBox(width: 12),
               Expanded(
-                child: Text(b.name,
-                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
-                    overflow: TextOverflow.ellipsis),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(b.name,
+                      style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                      overflow: TextOverflow.ellipsis),
+                  Text([tr(sp.id), if (b.place.isNotEmpty) b.place].join(' · '),
+                      style: theme.textTheme.bodySmall, overflow: TextOverflow.ellipsis),
+                ]),
               ),
-              Text(trf('day_of', [b.day.clamp(1, sp.days), sp.days]), style: theme.textTheme.labelLarge),
             ]),
-            const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: LinearProgressIndicator(value: (b.day / sp.days).clamp(0.0, 1.0), minHeight: 8),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              [
-                tr(sp.id),
-                '${b.remaining} ${tr('eggs')}',
-                if (b.hatched > 0) '${tr('hatched')} ${b.hatched}',
-                if (b.lost > 0) '${tr('lost')} ${b.lost}',
-                if (b.place.isNotEmpty) b.place,
-              ].join(' · '),
-              style: theme.textTheme.bodySmall,
-            ),
-            const SizedBox(height: 2),
-            Text(milestone(b), style: theme.textTheme.bodyMedium),
+            const SizedBox(height: 12),
+            EggTray(eggs: eggsOf(b), columns: 10, maxEggs: 30),
+            EggLegend(b, compact: true),
+            const SizedBox(height: 6),
+            Row(children: [
+              Icon(Icons.flag_rounded, size: 16, color: theme.colorScheme.primary),
+              const SizedBox(width: 6),
+              Expanded(child: Text(milestone(b), style: theme.textTheme.bodyMedium)),
+            ]),
           ]),
         ),
       ),
+    );
+  }
+}
+
+/// Incubation day inside a progress ring.
+class DayRing extends StatelessWidget {
+  const DayRing(this.b, {super.key, this.size = 52});
+  final Batch b;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final days = b.sp.days;
+    final d = b.day.clamp(1, days);
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Stack(alignment: Alignment.center, children: [
+        SizedBox.expand(
+          child: CircularProgressIndicator(
+            value: b.active ? d / days : 1,
+            strokeWidth: size * 0.09,
+            strokeCap: StrokeCap.round,
+            backgroundColor: theme.colorScheme.surfaceContainerHighest,
+          ),
+        ),
+        Column(mainAxisSize: MainAxisSize.min, children: [
+          Text('$d', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800, height: 1)),
+          Text('/$days', style: theme.textTheme.labelSmall?.copyWith(height: 1)),
+        ]),
+      ]),
+    );
+  }
+}
+
+/// Counts per egg status, each with its egg. The admin can tap a count to change it.
+class EggLegend extends StatelessWidget {
+  const EggLegend(this.b, {super.key, this.compact = false, this.onTap});
+  final Batch b;
+  final bool compact;
+  final void Function(String field, String label, int value)? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final items = [
+      (EggStatus.incubating, tr('remaining'), b.remaining, ''),
+      (EggStatus.hatched, tr('hatched'), b.hatched, 'hatched'),
+      (EggStatus.dead, tr('dead'), b.dead, 'dead'),
+      (EggStatus.clear, tr('clear'), b.clear, 'clear'),
+      (EggStatus.broken, tr('broken'), b.broken, 'broken'),
+    ];
+    if (compact) {
+      return Wrap(spacing: 12, runSpacing: 4, children: [
+        for (final (st, label, n, _) in items)
+          if (n > 0 || st == EggStatus.incubating)
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              EggIcon(st, size: 12),
+              const SizedBox(width: 4),
+              Text('$n $label', style: theme.textTheme.labelMedium),
+            ]),
+      ]);
+    }
+    return GridView.count(
+      crossAxisCount: 3,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      mainAxisSpacing: 8,
+      crossAxisSpacing: 8,
+      childAspectRatio: 1.25,
+      children: [
+        for (final (st, label, n, field) in [...items, (EggStatus.incubating, tr('eggs'), b.eggs, 'eggs')])
+          Material(
+            color: theme.colorScheme.surfaceContainerHigh,
+            borderRadius: BorderRadius.circular(16),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(16),
+              onTap: onTap != null && field.isNotEmpty ? () => onTap!(field, label, n) : null,
+              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                field == 'eggs'
+                    ? Icon(Icons.inventory_2_outlined, size: 24, color: theme.colorScheme.primary)
+                    : EggIcon(st, size: 20),
+                const SizedBox(height: 4),
+                Text('$n', style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                Text(label, style: theme.textTheme.bodySmall, textAlign: TextAlign.center),
+              ]),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -84,24 +170,6 @@ class BatchScreen extends StatelessWidget {
     final loc = MaterialLocalizations.of(context);
     final sp = b.sp;
     final next = b.active ? nextTurn([b], incubator.turnTimes) : null;
-
-    Widget count(String label, int value, String field, Color? color) => Expanded(
-          child: Card(
-            color: theme.colorScheme.surfaceContainerHigh,
-            child: InkWell(
-              borderRadius: BorderRadius.circular(12),
-              onTap: admin && field.isNotEmpty ? () => _editCount(context, b, field, label, value) : null,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-                child: Column(children: [
-                  Text('$value',
-                      style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w600, color: color)),
-                  Text(label, style: theme.textTheme.bodySmall, textAlign: TextAlign.center),
-                ]),
-              ),
-            ),
-          ),
-        );
 
     final steps = [
       (1, tr('tl_start')),
@@ -146,28 +214,21 @@ class BatchScreen extends StatelessWidget {
             style: theme.textTheme.bodyMedium,
           ),
           const SizedBox(height: 12),
-          if (b.active) ...[
-            Text(trf('day_of', [b.day.clamp(1, sp.days), sp.days]),
-                style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: LinearProgressIndicator(value: (b.day / sp.days).clamp(0.0, 1.0), minHeight: 10),
+          Row(children: [
+            DayRing(b, size: 64),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(b.active ? trf('day_of', [b.day.clamp(1, sp.days), sp.days]) : tr('ended'),
+                    style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+                if (b.active) Text(milestone(b), style: theme.textTheme.bodyMedium),
+              ]),
             ),
-            const SizedBox(height: 6),
-            Text(milestone(b)),
-            const SizedBox(height: 16),
-          ],
-          Row(children: [
-            count(tr('eggs'), b.eggs, 'eggs', null),
-            count(tr('remaining'), b.remaining, '', null),
-            count(tr('hatched'), b.hatched, 'hatched', const Color(0xFF2E9E5B)),
           ]),
-          Row(children: [
-            count(tr('dead'), b.dead, 'dead', const Color(0xFFD64535)),
-            count(tr('clear'), b.clear, 'clear', const Color(0xFFE09A1A)),
-            count(tr('broken'), b.broken, 'broken', const Color(0xFFE09A1A)),
-          ]),
+          const SizedBox(height: 16),
+          EggTray(eggs: eggsOf(b)),
+          const SizedBox(height: 8),
+          EggLegend(b, onTap: admin ? (f, label, v) => _editCount(context, b, f, label, v) : null),
           const SizedBox(height: 8),
           ListTile(
             contentPadding: EdgeInsets.zero,
@@ -387,7 +448,7 @@ class PastBatchesScreen extends StatelessWidget {
             body: ListView(children: [
               for (final b in ended)
                 ListTile(
-                  leading: const Icon(Icons.egg_outlined),
+                  leading: const EggIcon(EggStatus.hatched, size: 26),
                   title: Text(b.name),
                   subtitle: Text(
                       '${tr(b.sp.id)} · ${loc.formatMediumDate(b.startedAt)} · ${tr('hatched')} ${b.hatched}/${b.eggs} · ${tr('lost')} ${b.lost}'),
