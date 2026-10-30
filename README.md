@@ -26,28 +26,33 @@ on the home Wi-Fi or from anywhere over the internet.
 | DHT22 VCC / relay VCC | 3.3 V / 5 V (VIN) |
 | GND | GND |
 
-Pins and relay polarity are in `firmware/incubator/config.h` (`RELAY_ACTIVE_LOW` is 1 for the usual blue
-relay boards). **The lamp runs on mains power: wire the relay's COM/NO contacts in the lamp's live wire,
-keep mains wiring enclosed, and never touch it while plugged in.** Put the DHT22 at egg height, away
-from the direct heat of the lamp.
+Pins and relay polarity are in `firmware/config.py`. **The lamp runs on mains power: wire the relay's
+COM/NO contacts in the lamp's live wire, keep mains wiring enclosed, and never touch it while plugged in.**
+Put the DHT22 at egg height, away from the direct heat of the lamp.
 
 Safety built in: the lamp turns off if the sensor stops answering, and at 39.5 °C whatever the mode.
 
-## Flash the ESP32
+## Put the program on the ESP32 (no Arduino needed)
 
-1. Arduino IDE → Boards Manager → install **esp32** (Espressif, 3.x).
-2. Library Manager → install **DHT sensor library** (Adafruit), **Adafruit Unified Sensor**, **ArduinoJson**.
-3. Open `firmware/incubator/incubator.ino`, board **ESP32 Dev Module**, upload.
+The ESP32 runs MicroPython. You need only Python on the computer (python.org, tick "Add python.exe to PATH").
+
+1. Download this repo (Code → Download ZIP) and open the `firmware` folder.
+2. Plug the ESP32 with a data USB cable and double-click **`START.bat`**.
+3. Optional: type your home Wi-Fi name and password.
+4. Press **Install on ESP32**. The first time it downloads about 7 MB in total (tools + MicroPython)
+   and takes about 2 minutes. "Failed to connect"? Hold the **BOOT** button and press Install again.
+
+After changing `config.py`, press **Update code only** (a few seconds). **Show board output** prints the
+temperature, Wi-Fi and cloud status once a minute.
 
 ## First setup
 
-1. Power the incubator. It opens a Wi-Fi called **Incubator-xxxx** (password `incubator`).
-2. Join it from the phone; a setup page opens. Pick your home Wi-Fi and enter its password.
-   (Or open the app and tap **Find** while on that Wi-Fi.)
-3. Put the phone back on the home Wi-Fi, open the app, tap **Find incubator**.
+1. If you did not type the Wi-Fi in the installer: power the incubator, join the Wi-Fi called
+   **Incubator-xxxx** (password `incubator`) from the phone; a setup page opens. Pick your home Wi-Fi.
+2. On the home Wi-Fi, open the app and tap **Find incubator**.
 
-To watch from a second phone, copy the **device key** from Menu → Connection and use **Enter device key**
-on the other phone.
+To watch from more phones: on the same Wi-Fi tap **Find incubator**, or copy the **device key** from
+Menu → Connection and use **Enter device key** on the other phone. Any number of phones can watch at once.
 
 ## Egg presets
 
@@ -65,7 +70,7 @@ The incubator controls temperature only. Raise humidity with a water tray, lower
 
 | Path | What |
 |---|---|
-| `firmware/incubator/` | ESP32 sketch (`config.h` = pins, cloud) |
+| `firmware/` | ESP32 program (MicroPython), `config.py` = pins and cloud, `START.bat` = installer |
 | `lib/` | Flutter app |
 | `supabase/incubator.sql` | Cloud tables and functions |
 | `tool/make_icon.py` | Draws the app icon and Android launcher icons |
