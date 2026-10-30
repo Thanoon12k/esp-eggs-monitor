@@ -385,6 +385,8 @@ void setupServer() {
 
 // ---- Main ---------------------------------------------------------------------------
 void setup() {
+  pinMode(PIN_LED, OUTPUT);
+  digitalWrite(PIN_LED, HIGH);
   pinMode(PIN_LAMP, OUTPUT);
   pinMode(PIN_FAN, OUTPUT);
   setRelay(PIN_LAMP, false);

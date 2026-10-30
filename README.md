@@ -19,9 +19,10 @@ on the home Wi-Fi or from anywhere over the internet.
 
 | Part | ESP32 pin |
 |---|---|
-| DHT22 data (10 kΩ pull-up to 3.3 V if the module has none) | GPIO 4 |
-| Relay 1 IN → heat lamp | GPIO 26 |
-| Relay 2 IN → fan | GPIO 27 |
+| Power LED (always on) | GPIO 16 |
+| DHT22 data (10 kΩ pull-up to 3.3 V if the module has none) | GPIO 17 |
+| Relay 1 IN → heat lamp | GPIO 21 |
+| Relay 2 IN → fan | GPIO 22 |
 | DHT22 VCC / relay VCC | 3.3 V / 5 V (VIN) |
 | GND | GND |
 

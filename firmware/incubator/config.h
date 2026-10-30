@@ -1,9 +1,10 @@
 #pragma once
 
 // ---- Wiring ---------------------------------------------------------------
-#define PIN_DHT 4          // DHT22 data pin (10k pull-up to 3.3V if your module has none)
-#define PIN_LAMP 26        // relay 1: heat lamp
-#define PIN_FAN 27         // relay 2: fan
+#define PIN_LED 16         // power indicator, always on
+#define PIN_DHT 17         // DHT22 data pin (10k pull-up to 3.3V if your module has none)
+#define PIN_LAMP 21        // relay 1: heat lamp
+#define PIN_FAN 22         // relay 2: fan
 #define RELAY_ACTIVE_LOW 1 // most blue relay boards switch ON when the pin is LOW
 
 // ---- Setup Wi-Fi (shown when the incubator is not on your home Wi-Fi) ------
