@@ -93,7 +93,7 @@ class App(tk.Tk):
     # ---------------------------------------------------------------- helpers
     def pump(self):
         try:
-            while True:
+            for _ in range(200):  # bounded, so a flood of output cannot freeze the window
                 text, tag = self.q.get_nowait()
                 parts = text.replace("\r\n", "\n").split("\r")
                 self.log.insert("end", parts[0], tag)
@@ -206,13 +206,12 @@ class App(tk.Tk):
         self.say("Saved " + os.path.basename(dest), "ok")
         return dest
 
-    def upload(self, p):
+    def upload(self, p, ssid, pw):
         cmd = [PY, "-m", "mpremote", "connect", p]
         for f in BOARD_FILES:
             cmd += ["cp", f, ":" + f, "+"]
-        ssid = self.ssid.get().strip()
         if ssid:
-            cmd += ["exec", "open('wifi.json','w').write(%r)" % json.dumps({"ssid": ssid, "pass": self.pw.get()}), "+"]
+            cmd += ["exec", "open('wifi.json','w').write(%r)" % json.dumps({"ssid": ssid, "pass": pw}), "+"]
         cmd += ["reset"]
         for attempt in range(3):
             rc, out = self.run("Uploading the incubator program", cmd)
@@ -228,6 +227,7 @@ class App(tk.Tk):
         if self.busy:
             return
         p = self.port_dev()
+        ssid, pw = self.ssid.get().strip(), self.pw.get()
         if not p and have("serial"):
             messagebox.showwarning("No board", "Plug the ESP32 with a data USB cable and press Refresh.\n\n"
                                    "Nothing shows up? Install the CP210x or CH340 USB driver.")
@@ -238,11 +238,15 @@ class App(tk.Tk):
         self.log.delete("1.0", "end")
 
         def work():
-            ok = steps(p)
+            try:
+                ok = steps(p, ssid, pw)
+            except Exception as e:
+                self.say("Error: %s" % e, "bad")
+                ok = False
             if ok:
                 self.say("\nDone! The incubator is running.", "ok")
-                self.set_status("Done! " + ("It joins %s now. Open the app and tap Find incubator." % self.ssid.get()
-                                            if self.ssid.get().strip() else
+                self.set_status("Done! " + ("It joins %s now. Open the app and tap Find incubator." % ssid
+                                            if ssid else
                                             "On your phone, join the Wi-Fi 'Incubator-...' (password: incubator)."),
                                 "#208030")
             else:
@@ -251,16 +255,17 @@ class App(tk.Tk):
         threading.Thread(target=work, daemon=True).start()
 
     def install(self):
-        def steps(p):
+        def steps(p, ssid, pw):
             self.set_status("1/4  Getting tools ready...")
             if not self.ensure_tools():
                 return False
-            if not p:
+            if not p:  # pyserial was just installed: look for the board now
+                from serial.tools import list_ports
+                found = [x.device for x in list_ports.comports()]
                 self.after(0, self.refresh_ports)
-                time.sleep(1)
-                p = self.port_dev()
+                p = found[0] if len(found) == 1 else None
                 if not p:
-                    self.say("No board found. Plug the ESP32 and press Install again.", "bad")
+                    self.say("Pick the board's USB port at the top and press Install again.", "bad")
                     return False
             fw = self.ensure_firmware()
             if not fw:
@@ -279,13 +284,13 @@ class App(tk.Tk):
             self.say("waiting 5 s for the board to start...")
             time.sleep(5)
             self.set_status("4/4  Uploading the incubator program...")
-            return self.upload(p)
+            return self.upload(p, ssid, pw)
         self.job(steps)
 
     def update_code(self):
-        def steps(p):
+        def steps(p, ssid, pw):
             self.set_status("Uploading the incubator program...")
-            return self.ensure_tools() and self.upload(p)
+            return self.ensure_tools() and self.upload(p, ssid, pw)
         self.job(steps)
 
     def stop(self):
