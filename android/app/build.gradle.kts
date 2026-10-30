@@ -6,10 +6,13 @@ plugins {
 
 android {
     namespace = "com.thanoon.egg_incubator"
-    compileSdk = flutter.compileSdkVersion
+    // flutter_local_notifications needs compileSdk 36 or newer
+    compileSdk = maxOf(flutter.compileSdkVersion, 36)
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
+        // needed by flutter_local_notifications
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -38,4 +41,8 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }

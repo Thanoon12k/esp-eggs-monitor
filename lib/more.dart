@@ -1,60 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'alarms.dart';
 import 'chart.dart';
 import 'device.dart';
 import 'home.dart';
 import 'main.dart';
-import 'species.dart';
 import 'strings.dart';
 
-/// Sends a settings change and tells the user if it could not be delivered or will apply later.
+/// Sends a settings change to the incubator (admin) and says if it could not be delivered.
 Future<void> sendSettings(BuildContext context, Map<String, dynamic> patch) async {
   final ok = await incubator.setSettings(patch);
   if (!context.mounted) return;
-  final msg = !ok ? tr('not_reachable') : (incubator.link == Link.cloud ? tr('pending') : null);
+  final msg = !ok
+      ? (incubator.isAdmin ? tr('not_reachable') : tr('pin_wrong'))
+      : (incubator.link == Link.cloud ? tr('pending') : null);
   if (msg != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-}
-
-/// Pick the egg type and start counting from today.
-Future<void> startBatchDialog(BuildContext context) async {
-  var chosen = incubator.species;
-  final ok = await showDialog<bool>(
-    context: context,
-    builder: (context) => StatefulBuilder(
-      builder: (context, setState) => AlertDialog(
-        title: Text(tr('new_batch')),
-        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(tr('new_batch_q')),
-          const SizedBox(height: 12),
-          for (final sp in allSpecies)
-            RadioListTile<Species>(
-              contentPadding: EdgeInsets.zero,
-              value: sp,
-              // ignore: deprecated_member_use
-              groupValue: chosen,
-              // ignore: deprecated_member_use
-              onChanged: (v) => setState(() => chosen = v!),
-              title: Text(tr(sp.id)),
-              subtitle: Text('${trf('days', [sp.days])} · ${sp.temp}° · ${sp.hMin}–${sp.hMax}%'),
-            ),
-        ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr('cancel'))),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr('start'))),
-        ],
-      ),
-    ),
-  );
-  if (ok != true || !context.mounted) return;
-  await sendSettings(context, {
-    'species': chosen.id,
-    'start': Incubator.nowSec(),
-    'turned': Incubator.nowSec(),
-    't_target': chosen.temp,
-    'h_min': chosen.hMin,
-    'h_max': chosen.hMax,
-  });
 }
 
 Future<bool> confirm(BuildContext context, String title, String body) async =>
@@ -71,10 +32,83 @@ Future<bool> confirm(BuildContext context, String title, String body) async =>
     ) ==
     true;
 
-String _modeLabel(String? m, {bool fan = false}) => switch (m) {
+String modeLabel(String? m, {bool fan = false}) => switch (m) {
       'on' => tr('mode_always'),
       'off' => tr('mode_off'),
       _ => fan ? tr('mode_auto_fan') : tr('mode_auto'),
+    };
+
+Future<void> pickMode(BuildContext context, String which) async {
+  final current = (incubator.settings[which] as String?) ?? (which == 'fan' ? 'on' : 'auto');
+  final picked = await showModalBottomSheet<String>(
+    context: context,
+    showDragHandle: true,
+    builder: (context) => SafeArea(
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        for (final m in ['auto', 'on', 'off'])
+          ListTile(
+            title: Text(modeLabel(m, fan: which == 'fan')),
+            trailing: m == current ? const Icon(Icons.check) : null,
+            onTap: () => Navigator.pop(context, m),
+          ),
+      ]),
+    ),
+  );
+  if (picked != null && picked != current && context.mounted) await sendSettings(context, {which: picked});
+}
+
+/// Asks for a 4-digit PIN. With [twice], asks again to confirm a new one.
+Future<String?> askPin(BuildContext context, String title, {bool twice = false}) async {
+  final a = TextEditingController(), b = TextEditingController();
+  String? error;
+  return showDialog<String>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, setState) {
+        InputDecoration deco(String label) => InputDecoration(labelText: label, counterText: '');
+        Widget field(TextEditingController c, String label) => TextField(
+              controller: c,
+              autofocus: c == a,
+              obscureText: true,
+              maxLength: 4,
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              textDirection: TextDirection.ltr,
+              decoration: deco(label),
+            );
+        return AlertDialog(
+          title: Text(title),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            field(a, twice ? tr('new_pin') : tr('enter_pin')),
+            if (twice) field(b, tr('repeat_pin')),
+            if (error != null)
+              Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: Text(tr('cancel'))),
+            FilledButton(
+              onPressed: () {
+                if (a.text.length != 4) return;
+                if (twice && a.text != b.text) {
+                  setState(() => error = tr('pin_mismatch'));
+                  return;
+                }
+                Navigator.pop(context, a.text);
+              },
+              child: Text(tr('save')),
+            ),
+          ],
+        );
+      },
+    ),
+  );
+}
+
+String adminErrorText(AdminError e) => switch (e.code) {
+      'wrong' => tr('pin_wrong'),
+      'locked' => tr('pin_locked'),
+      'none' => tr('pin_none'),
+      _ => tr('pin_offline'),
     };
 
 /// Everything that is not needed at a glance, as one plain list.
@@ -84,72 +118,123 @@ class MoreScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ListenableBuilder(listenable: incubator, builder: _build);
 
+  void _snack(BuildContext context, String msg) =>
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+
+  Future<void> _admin(BuildContext context, Future<void> Function() action) async {
+    try {
+      await action();
+    } on AdminError catch (e) {
+      if (context.mounted) _snack(context, adminErrorText(e));
+    }
+  }
+
   Widget _build(BuildContext context, Widget? _) {
     final inc = incubator;
+    final admin = inc.isAdmin;
     final s = inc.settings;
-    final started = inc.startedAt;
     final (hMin, hMax) = inc.humidityRange;
-    final loc = MaterialLocalizations.of(context);
+    final big = Theme.of(context).textTheme.titleMedium;
 
     return Scaffold(
       appBar: AppBar(title: Text(tr('more'))),
       body: ListView(
         padding: const EdgeInsets.only(bottom: 32),
         children: [
-          _Section(tr('sec_batch')),
+          _Section(tr('admin')),
           ListTile(
-            leading: const Icon(Icons.egg_outlined),
-            title: Text(tr('egg_type')),
-            subtitle: Text(started == null ? tr('no_batch') : tr(inc.species.id)),
+            leading: Icon(admin ? Icons.verified_user_rounded : Icons.visibility_outlined),
+            title: Text(admin ? tr('you_are_admin') : tr('viewer')),
+            subtitle: Text(tr('admin_hint')),
           ),
-          if (started != null)
+          if (!admin && inc.hasAdmin)
             ListTile(
-              leading: const Icon(Icons.event_outlined),
-              title: Text(tr('started')),
-              subtitle: Text('${loc.formatMediumDate(started)} · ${trf('day_of', [inc.day!, inc.species.days])}'),
-            ),
-          ListTile(
-            leading: const Icon(Icons.add_circle_outline),
-            title: Text(tr('new_batch')),
-            onTap: () => startBatchDialog(context),
-          ),
-          if (started != null)
-            ListTile(
-              leading: const Icon(Icons.stop_circle_outlined),
-              title: Text(tr('end_batch')),
+              leading: const Icon(Icons.login),
+              title: Text(tr('admin_login')),
               onTap: () async {
-                if (await confirm(context, tr('end_batch'), tr('end_batch_q')) && context.mounted) {
-                  await sendSettings(context, {'start': 0});
+                final p = await askPin(context, tr('admin_login'));
+                if (p != null && context.mounted) await _admin(context, () => incubator.adminLogin(p));
+              },
+            ),
+          if (!admin && !inc.hasAdmin)
+            ListTile(
+              leading: const Icon(Icons.admin_panel_settings_outlined),
+              title: Text(tr('become_admin')),
+              onTap: () async {
+                final p = await askPin(context, tr('become_admin'), twice: true);
+                if (p != null && context.mounted) await _admin(context, () => incubator.setPin(p));
+              },
+            ),
+          if (admin) ...[
+            ListTile(
+              leading: const Icon(Icons.password),
+              title: Text(tr('change_pin')),
+              onTap: () async {
+                final p = await askPin(context, tr('change_pin'), twice: true);
+                if (p != null && context.mounted) {
+                  await _admin(context, () async {
+                    await incubator.setPin(p);
+                    if (context.mounted) _snack(context, tr('save'));
+                  });
                 }
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.logout),
+              title: Text(tr('admin_logout')),
+              onTap: incubator.adminLogout,
+            ),
+          ],
           _Section(tr('sec_targets')),
           ListTile(
+            enabled: admin,
             leading: const Icon(Icons.thermostat_outlined),
             title: Text(tr('temp')),
-            trailing: Text('${fmt1(inc.tTarget)}°', style: Theme.of(context).textTheme.titleMedium),
+            trailing: Text('${fmt1(inc.tTarget)}°', style: big),
             onTap: () => _editTemp(context),
           ),
           ListTile(
+            enabled: admin,
             leading: const Icon(Icons.water_drop_outlined),
             title: Text(tr('humidity_range')),
             subtitle: Text(tr('hum_note')),
-            trailing: Text('$hMin–$hMax%', style: Theme.of(context).textTheme.titleMedium),
+            trailing: Text('$hMin–$hMax%', style: big),
             onTap: () => _editHumidity(context),
+          ),
+          ListTile(
+            enabled: admin,
+            leading: const Icon(Icons.schedule),
+            title: Text(tr('turn_times')),
+            subtitle: Text(inc.turnTimes.map((h) => hourLabel(context, h)).join(' · ')),
+            onTap: () => _editTurnTimes(context),
           ),
           _Section(tr('sec_controls')),
           ListTile(
+            enabled: admin,
             leading: const Icon(Icons.light_mode_outlined),
             title: Text(tr('lamp')),
             subtitle: Text(tr('lamp_auto_hint')),
-            trailing: Text(_modeLabel(s['lamp'] as String?)),
-            onTap: () => _pickMode(context, 'lamp'),
+            trailing: Text(modeLabel(s['lamp'] as String?)),
+            onTap: () => pickMode(context, 'lamp'),
           ),
           ListTile(
+            enabled: admin,
             leading: const Icon(Icons.air),
             title: Text(tr('fan')),
-            trailing: Text(_modeLabel(s['fan'] as String?, fan: true)),
-            onTap: () => _pickMode(context, 'fan'),
+            trailing: Text(modeLabel(s['fan'] as String?, fan: true)),
+            onTap: () => pickMode(context, 'fan'),
+          ),
+          if (!admin)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(tr('viewer_note'), style: Theme.of(context).textTheme.bodySmall),
+            ),
+          _Section(tr('alarms')),
+          ListTile(
+            leading: const Icon(Icons.notifications_active_outlined),
+            title: Text(tr('alarms')),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AlarmsScreen())),
           ),
           _Section(tr('sec_history')),
           Padding(
@@ -199,7 +284,7 @@ class MoreScreen extends StatelessWidget {
             trailing: const Icon(Icons.copy_rounded),
             onTap: () {
               Clipboard.setData(ClipboardData(text: inc.key));
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(tr('copied'))));
+              _snack(context, tr('copied'));
             },
           ),
           ListTile(
@@ -260,10 +345,7 @@ class MoreScreen extends StatelessWidget {
 
   Future<void> _editHumidity(BuildContext context) async {
     final s = incubator.settings;
-    var range = RangeValues(
-      ((s['h_min'] as num?) ?? incubator.species.hMin).toDouble(),
-      ((s['h_max'] as num?) ?? incubator.species.hMax).toDouble(),
-    );
+    var range = RangeValues(((s['h_min'] as num?) ?? 50).toDouble(), ((s['h_max'] as num?) ?? 55).toDouble());
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -291,23 +373,43 @@ class MoreScreen extends StatelessWidget {
     }
   }
 
-  Future<void> _pickMode(BuildContext context, String which) async {
-    final current = (incubator.settings[which] as String?) ?? (which == 'fan' ? 'on' : 'auto');
-    final picked = await showModalBottomSheet<String>(
+  Future<void> _editTurnTimes(BuildContext context) async {
+    final hours = [...incubator.turnTimes];
+    final ok = await showDialog<bool>(
       context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          for (final m in ['auto', 'on', 'off'])
-            ListTile(
-              title: Text(_modeLabel(m, fan: which == 'fan')),
-              trailing: m == current ? const Icon(Icons.check) : null,
-              onTap: () => Navigator.pop(context, m),
-            ),
-        ]),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text(tr('turn_times')),
+          content: SizedBox(
+            width: 320,
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(tr('turn_times_hint')),
+              const SizedBox(height: 12),
+              Wrap(spacing: 6, runSpacing: 6, children: [
+                for (var h = 0; h < 24; h++)
+                  FilterChip(
+                    label: Text(hourLabel(context, h)),
+                    selected: hours.contains(h),
+                    showCheckmark: false,
+                    onSelected: (on) => setState(() {
+                      if (on) {
+                        hours.add(h);
+                      } else {
+                        hours.remove(h);
+                      }
+                    }),
+                  ),
+              ]),
+            ]),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: Text(tr('cancel'))),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(tr('save'))),
+          ],
+        ),
       ),
     );
-    if (picked != null && picked != current && context.mounted) await sendSettings(context, {which: picked});
+    if (ok == true) incubator.setTurnTimes(hours);
   }
 }
 

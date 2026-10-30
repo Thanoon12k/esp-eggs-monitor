@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import 'batch.dart';
 import 'device.dart';
 import 'main.dart';
+import 'models.dart';
 import 'more.dart';
 import 'strings.dart';
 
@@ -15,6 +17,9 @@ String ago(DateTime t) {
 
 String fmt1(double v) => v.toStringAsFixed(1);
 
+String hourLabel(BuildContext context, int h) =>
+    MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay(hour: h, minute: 0));
+
 enum Level { good, warn, bad, off }
 
 Color levelColor(BuildContext context, Level l) => switch (l) {
@@ -24,7 +29,7 @@ Color levelColor(BuildContext context, Level l) => switch (l) {
       Level.off => Theme.of(context).colorScheme.outline,
     };
 
-/// The one screen that matters: is the incubator OK, how warm, how humid, which day.
+/// The one screen: is the incubator OK (temperature, humidity), then the batches of eggs.
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
@@ -33,11 +38,18 @@ class HomeScreen extends StatelessWidget {
 
   Widget _build(BuildContext context, Widget? _) {
     final inc = incubator;
+    final active = inc.activeBatches;
+    final ended = inc.endedBatches;
     return Scaffold(
       appBar: AppBar(
         title: Text(tr('app')),
         actions: [
           _LinkChip(inc.link),
+          if (inc.isAdmin)
+            Padding(
+              padding: const EdgeInsetsDirectional.only(start: 6),
+              child: Tooltip(message: tr('you_are_admin'), child: const Icon(Icons.verified_user_rounded, size: 20)),
+            ),
           IconButton(
             tooltip: tr('more'),
             icon: const Icon(Icons.menu_rounded),
@@ -60,23 +72,46 @@ class HomeScreen extends StatelessWidget {
                 Expanded(child: _HumCard(inc)),
               ],
             ),
-            const SizedBox(height: 12),
-            _DayCard(inc),
-            if (_turnDue(inc)) ...[const SizedBox(height: 12), _TurnCard(inc)],
-            const SizedBox(height: 20),
+            const SizedBox(height: 14),
             _OutputsRow(inc),
+            if (inc.isAdmin && inc.outboxCount > 0) ...[
+              const SizedBox(height: 10),
+              Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                const Icon(Icons.cloud_upload_outlined, size: 16),
+                const SizedBox(width: 6),
+                Text(trf('queued', [inc.outboxCount]), style: Theme.of(context).textTheme.bodySmall),
+              ]),
+            ],
+            if (turnDue(active, inc.turnTimes)) ...[const SizedBox(height: 14), _TurnCard(inc)],
+            const SizedBox(height: 22),
+            Row(children: [
+              Text(tr('batches'), style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+              const Spacer(),
+              if (inc.isAdmin)
+                TextButton.icon(
+                  onPressed: () => openBatchEditor(context, null),
+                  icon: const Icon(Icons.add),
+                  label: Text(tr('add_batch')),
+                ),
+            ]),
+            const SizedBox(height: 6),
+            if (active.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Text(tr('no_batches'), textAlign: TextAlign.center),
+              ),
+            for (final b in active) ...[BatchCard(b), const SizedBox(height: 10)],
+            if (ended.isNotEmpty)
+              TextButton(
+                onPressed: () =>
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => const PastBatchesScreen())),
+                child: Text(trf('history_batches', [ended.length])),
+              ),
           ],
         ),
       ),
     );
   }
-}
-
-bool _turnDue(Incubator inc) {
-  final day = inc.day;
-  if (day == null || inc.inLockdown) return false;
-  final last = inc.turnedAt;
-  return last == null || DateTime.now().difference(last) > const Duration(hours: 8);
 }
 
 class _LinkChip extends StatelessWidget {
@@ -228,106 +263,64 @@ class _HumCard extends StatelessWidget {
   }
 }
 
-class _DayCard extends StatelessWidget {
-  const _DayCard(this.inc);
-  final Incubator inc;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final day = inc.day;
-    final sp = inc.species;
-    if (day == null) {
-      return Card(
-        color: theme.colorScheme.surfaceContainerHigh,
-        child: ListTile(
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-          leading: const Icon(Icons.egg_outlined),
-          title: Text(tr('no_batch')),
-          trailing: FilledButton(onPressed: () => startBatchDialog(context), child: Text(tr('start_batch'))),
-        ),
-      );
-    }
-    final String note;
-    if (day >= sp.days) {
-      note = tr('hatch_today');
-    } else if (inc.inLockdown) {
-      note = '${tr('lockdown_now')} · ${trf('hatch_in', [sp.days - day + 1])}';
-    } else {
-      note = trf('lockdown_in', [sp.lockdownDay - day]);
-    }
-    return Card(
-      color: theme.colorScheme.surfaceContainerHigh,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            const Icon(Icons.egg_rounded, size: 20),
-            const SizedBox(width: 8),
-            Text(trf('day_of', [day.clamp(1, sp.days), sp.days]),
-                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
-            const Spacer(),
-            Text(tr(sp.id), style: theme.textTheme.labelLarge),
-          ]),
-          const SizedBox(height: 10),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: LinearProgressIndicator(value: (day / sp.days).clamp(0.0, 1.0), minHeight: 10),
-          ),
-          const SizedBox(height: 8),
-          Text(note, style: theme.textTheme.bodyMedium),
-        ]),
-      ),
-    );
-  }
-}
-
 class _TurnCard extends StatelessWidget {
   const _TurnCard(this.inc);
   final Incubator inc;
 
   @override
   Widget build(BuildContext context) {
-    final last = inc.turnedAt;
+    final names = inc.activeBatches.where((b) => !b.inLockdown).map((b) => b.name).join('، ');
     return Card(
       color: Theme.of(context).colorScheme.tertiaryContainer,
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
         leading: const Icon(Icons.sync_rounded),
         title: Text(tr('turn_eggs')),
-        subtitle: Text(last == null ? tr('turn_never') : trf('turn_last', [ago(last)])),
-        trailing: FilledButton.tonal(
-          onPressed: () => sendSettings(context, {'turned': Incubator.nowSec()}),
-          child: Text(tr('done')),
-        ),
+        subtitle: Text(names),
+        trailing: inc.isAdmin
+            ? FilledButton.tonal(onPressed: inc.markTurned, child: Text(tr('done')))
+            : null,
       ),
     );
   }
 }
 
+/// Lamp and fan: shown to everyone; the admin can tap to switch them.
 class _OutputsRow extends StatelessWidget {
   const _OutputsRow(this.inc);
   final Incubator inc;
 
   @override
   Widget build(BuildContext context) {
-    Widget chip(IconData icon, String label, bool on) {
+    if (!inc.hasData) return const SizedBox.shrink();
+    Widget chip(IconData icon, String which, String label, bool on) {
       final c = on ? const Color(0xFFE8833A) : Theme.of(context).colorScheme.outline;
-      return Row(mainAxisSize: MainAxisSize.min, children: [
+      final mode = inc.settings[which] as String?;
+      final child = Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(icon, size: 18, color: c),
         const SizedBox(width: 6),
         Text('$label: ${on ? tr('on') : tr('off')}', style: Theme.of(context).textTheme.bodyMedium),
+        if (mode != null && mode != 'auto') ...[
+          const SizedBox(width: 4),
+          Text('(${modeLabel(mode, fan: which == 'fan')})', style: Theme.of(context).textTheme.bodySmall),
+        ],
+        if (inc.isAdmin) ...[const SizedBox(width: 2), const Icon(Icons.arrow_drop_down, size: 18)],
       ]);
+      if (!inc.isAdmin) return child;
+      return InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => pickMode(context, which),
+        child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4), child: child),
+      );
     }
 
-    if (!inc.hasData) return const SizedBox.shrink();
     return Wrap(
       alignment: WrapAlignment.center,
-      spacing: 24,
+      spacing: 20,
       runSpacing: 8,
       children: [
-        chip(Icons.light_mode_rounded, tr('lamp'), inc.lampOn),
-        chip(Icons.air_rounded, tr('fan'), inc.fanOn),
+        chip(Icons.light_mode_rounded, 'lamp', tr('lamp'), inc.lampOn),
+        chip(Icons.air_rounded, 'fan', tr('fan'), inc.fanOn),
       ],
     );
   }
